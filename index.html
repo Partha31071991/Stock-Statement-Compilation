@@ -105,4 +105,489 @@ const pp=[['SKU','PTS','SEC UNITS','SEC VALUE','CLO UNITS','CLO VALUE','INVENTOR
 $('download').onclick=()=>{if(!finalReady)return toast('Validate SKUs first');progress(98,'Building Excel','Filling SEC/CLO units and PTS values…');const wb=makeWorkbook();XLSX.writeFile(wb,`Stock_Statement_Compiled_${$('month').value||'MAY26'}.xlsx`);progress(100,'Excel ready','Downloaded successfully.')}
 $('clear').onclick=()=>{files=[];results=[];aliases={};finalReady=false;$('files').value='';$('master').value='';$('filesBody').innerHTML='';$('reviewBody').innerHTML='';$('outBody').innerHTML='';$('summary').innerHTML='';$('download').disabled=true;updateCount();progress(0,'Ready','Waiting for files');tab('filesTab')}
 async function checkApi(){try{const r=await fetch('/api/health',{cache:'no-store'});const d=await r.json();if(!r.ok||!d.ok)throw Error('Health check failed');$('apiStatus').innerHTML='<span class="pill ok">API: Online</span>'}catch(e){$('apiStatus').innerHTML='<span class="pill bad">API: Offline — deploy the project with the /api folder</span>';}}checkApi();loadBundledMaster();updateCount();
+  /* ===== SKU VALIDATION FIX FOR EARLY VERSION ===== */
+(function(){
+
+  window.__ignoredSkuKeys =
+    window.__ignoredSkuKeys || new Set();
+
+  function cleanSku(v){
+    return String(v || '')
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g,' ');
+  }
+
+  function enhanceSKUReview(){
+
+    const selects =
+      [...document.querySelectorAll('.reviewSelect')];
+
+    if(!selects.length) return;
+
+    selects.forEach(function(sel){
+
+      const row = sel.closest('tr');
+      if(!row) return;
+
+      const cells = [...row.children];
+
+      const sourceSku =
+        cells[1]?.textContent?.trim() || '';
+
+      const suggested =
+        cells[4]?.textContent?.trim() || '';
+
+      const confidenceText =
+        cells[5]?.textContent || '';
+
+      const confidence =
+        Number(
+          confidenceText.replace(/[^\d.]/g,'')
+        ) || 0;
+
+      const key = cleanSku(sourceSku);
+
+      /* Add Ignore option */
+      if(
+        ![...sel.options]
+          .some(o => o.value === '__IGNORE__')
+      ){
+        const opt =
+          document.createElement('option');
+
+        opt.value = '__IGNORE__';
+        opt.textContent =
+          '🚫 Ignore — Not Our Product';
+
+        sel.appendChild(opt);
+      }
+
+      /*
+       * HIGH-CONFIDENCE MATCH
+       * Automatically considered validated.
+       */
+      if(
+        confidence >= 82 &&
+        suggested &&
+        suggested !== '—'
+      ){
+
+        const option =
+          [...sel.options]
+            .find(o => o.value === suggested);
+
+        if(option && !sel.dataset.userChanged){
+          sel.value = suggested;
+        }
+
+        sel.dataset.autoValidated = 'true';
+
+        /*
+         * Change status column
+         */
+        if(cells[6]){
+          cells[6].innerHTML =
+            '<span class="pill ok">✓ AUTO MATCHED</span>';
+        }
+
+        /*
+         * Add explanation only once
+         */
+        if(
+          !sel.parentElement
+            .querySelector('.auto-note')
+        ){
+
+          const note =
+            document.createElement('div');
+
+          note.className =
+            'small good auto-note';
+
+          note.style.marginTop = '4px';
+
+          note.textContent =
+            '✓ Automatically validated — change only if required.';
+
+          sel.parentElement.appendChild(note);
+        }
+      }
+
+      /*
+       * Restore ignored SKU
+       */
+      if(
+        window.__ignoredSkuKeys.has(key)
+      ){
+        sel.value = '__IGNORE__';
+      }
+
+      /*
+       * Attach event only once
+       */
+      if(sel.dataset.fixAttached === '1')
+        return;
+
+      sel.dataset.fixAttached = '1';
+
+      sel.addEventListener('change',function(){
+
+        sel.dataset.userChanged = 'true';
+
+        const value = sel.value;
+
+        /*
+         * IGNORE
+         */
+        if(value === '__IGNORE__'){
+
+          window.__ignoredSkuKeys.add(key);
+
+          /*
+           * Ignore same SKU in other stockists
+           */
+          document
+            .querySelectorAll('.reviewSelect')
+            .forEach(function(other){
+
+              const otherRow =
+                other.closest('tr');
+
+              if(!otherRow) return;
+
+              const otherSku =
+                otherRow.children[1]
+                  ?.textContent
+                  ?.trim() || '';
+
+              if(cleanSku(otherSku) === key){
+                other.value = '__IGNORE__';
+              }
+
+            });
+
+        }
+
+        /*
+         * MANUAL CORRECTION
+         */
+        else if(value){
+
+          window.__ignoredSkuKeys.delete(key);
+
+          /*
+           * Learn correction
+           */
+          if(typeof aliases !== 'undefined'){
+            aliases[key] = value;
+          }
+
+          /*
+           * Apply same correction to
+           * identical SKU elsewhere
+           */
+          document
+            .querySelectorAll('.reviewSelect')
+            .forEach(function(other){
+
+              if(other === sel) return;
+
+              const otherRow =
+                other.closest('tr');
+
+              if(!otherRow) return;
+
+              const otherSku =
+                otherRow.children[1]
+                  ?.textContent
+                  ?.trim() || '';
+
+              if(cleanSku(otherSku) === key){
+
+                other.value = value;
+
+                other.dataset.userChanged =
+                  'true';
+              }
+
+            });
+
+        }
+
+        /*
+         * Blank selection
+         */
+        else{
+
+          window.__ignoredSkuKeys.delete(key);
+
+          if(typeof aliases !== 'undefined'){
+            delete aliases[key];
+          }
+        }
+
+        updateSKUApplyButton();
+
+      });
+
+    });
+
+    updateSKUApplyButton();
+  }
+
+
+  /*
+   * ONLY unresolved rows should block Apply.
+   * AUTO MATCHED rows do not block it.
+   */
+  function updateSKUApplyButton(){
+
+    const selects =
+      [...document.querySelectorAll('.reviewSelect')];
+
+    let pending = 0;
+
+    selects.forEach(function(sel){
+
+      if(sel.value === '__IGNORE__')
+        return;
+
+      if(sel.dataset.autoValidated === 'true')
+        return;
+
+      if(!sel.value)
+        pending++;
+
+    });
+
+    const button =
+      document.getElementById('applyAll');
+
+    if(button){
+
+      button.disabled =
+        pending > 0 || !results.length;
+
+      if(pending){
+
+        button.textContent =
+          'Validate Remaining SKUs (' +
+          pending +
+          ')';
+
+      }else{
+
+        button.textContent =
+          'Apply All Validated SKUs';
+
+      }
+
+    }
+
+  }
+
+
+  /*
+   * Watch SKU Review table.
+   * Existing buildReview() can continue
+   * working normally.
+   */
+  const reviewBody =
+    document.getElementById('reviewBody');
+
+  if(reviewBody){
+
+    const observer =
+      new MutationObserver(function(){
+
+        setTimeout(
+          enhanceSKUReview,
+          20
+        );
+
+      });
+
+    observer.observe(
+      reviewBody,
+      {
+        childList:true,
+        subtree:true
+      }
+    );
+
+  }
+
+
+  /*
+   * Replace Apply button behaviour.
+   * IMPORTANT:
+   * Do NOT re-read the PDFs here.
+   */
+  const applyButton =
+    document.getElementById('applyAll');
+
+  if(applyButton){
+
+    applyButton.onclick = function(){
+
+      enhanceSKUReview();
+
+      const unresolved =
+        [...document.querySelectorAll('.reviewSelect')]
+        .filter(function(sel){
+
+          return (
+            sel.value !== '__IGNORE__' &&
+            sel.dataset.autoValidated !== 'true' &&
+            !sel.value
+          );
+
+        });
+
+      if(unresolved.length){
+
+        if(typeof toast === 'function'){
+
+          toast(
+            unresolved.length +
+            ' SKU(s) still need validation.'
+          );
+
+        }
+
+        return;
+      }
+
+
+      /*
+       * Save corrections
+       */
+      document
+        .querySelectorAll('.reviewSelect')
+        .forEach(function(sel){
+
+          const row =
+            sel.closest('tr');
+
+          if(!row) return;
+
+          const sourceSku =
+            row.children[1]
+              ?.textContent
+              ?.trim() || '';
+
+          const key =
+            cleanSku(sourceSku);
+
+          if(sel.value === '__IGNORE__'){
+
+            window.__ignoredSkuKeys
+              .add(key);
+
+          }
+          else if(sel.value){
+
+            window.__ignoredSkuKeys
+              .delete(key);
+
+            if(typeof aliases !== 'undefined'){
+              aliases[key] =
+                sel.value;
+            }
+
+          }
+
+        });
+
+
+      /*
+       * Remove ignored SKUs
+       * from final compilation.
+       */
+      if(typeof results !== 'undefined'){
+
+        results.forEach(function(r){
+
+          r.matched =
+            (r.matched || [])
+            .filter(function(x){
+
+              return !window
+                .__ignoredSkuKeys
+                .has(
+                  cleanSku(x.source_sku)
+                );
+
+            });
+
+          r.reviews =
+            (r.reviews || [])
+            .filter(function(x){
+
+              return !window
+                .__ignoredSkuKeys
+                .has(
+                  cleanSku(x.source_sku)
+                );
+
+            });
+
+        });
+
+      }
+
+
+      /*
+       * Compilation is ready.
+       */
+      finalReady = true;
+
+      if(typeof renderOutput === 'function'){
+        renderOutput();
+      }
+
+      if(typeof tab === 'function'){
+        tab('outputTab');
+      }
+
+      if(typeof progress === 'function'){
+
+        progress(
+          100,
+          'Compilation complete',
+          'Auto matches accepted • corrections applied • ignored products excluded.'
+        );
+
+      }
+
+      const download =
+        document.getElementById('download');
+
+      if(download){
+        download.disabled = false;
+      }
+
+      if(typeof toast === 'function'){
+
+        toast(
+          'SKU validation completed successfully.'
+        );
+
+      }
+
+    };
+
+  }
+
+
+  /*
+   * Initial check
+   */
+  setTimeout(
+    enhanceSKUReview,
+    100
+  );
+
+})();
 </script></body></html>
