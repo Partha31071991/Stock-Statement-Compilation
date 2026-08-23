@@ -1,4 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse
 from pathlib import Path
 from openpyxl import load_workbook
 from pypdf import PdfReader
@@ -7,6 +8,9 @@ import io, csv, re, json
 
 app = FastAPI(title='Stock Statement Compilation Portal')
 BASE_DIR = Path(__file__).resolve().parent.parent
+@app.get("/", include_in_schema=False)
+def home():
+    return FileResponse(BASE_DIR / "index.html")
 
 @app.get('/api/health')
 @app.get('/health')
