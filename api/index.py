@@ -12,7 +12,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def home():
     return FileResponse(BASE_DIR / "index.html")
 
-@app.get('/api/health')
 @app.get('/health')
 def health():
     return {'ok': True, 'service': 'stock-statement-compiler', 'note': 'Use /api/health and /api/analyze'}
