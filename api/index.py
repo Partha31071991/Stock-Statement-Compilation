@@ -126,7 +126,6 @@ def match_rows(rows,pool,aliases,threshold):
         reviews.append(item)
     return out,reviews
 
-@app.post('/api/analyze')
 @app.post('/analyze')
 async def analyze_endpoint(file:UploadFile=File(...), pool_json:str=Form(...), aliases_json:str=Form('{}'), threshold:int=Form(82)):
     try:
