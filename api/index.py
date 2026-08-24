@@ -12,9 +12,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def home():
     return FileResponse(BASE_DIR / "index.html")
 
-@app.get('/health')
+@app.get('/api/health')
 def health():
-    return {'ok': True, 'service': 'stock-statement-compiler', 'note': 'Use /api/health and /api/analyze'}
+    return {
+        'ok': True,
+        'service': 'stock-statement-compiler',
+        'note': 'API is working'
+    }
 
 def num(x):
     if x is None: return 0.0
@@ -126,7 +130,7 @@ def match_rows(rows,pool,aliases,threshold):
         reviews.append(item)
     return out,reviews
 
-@app.post('/analyze')
+@app.post('/api/analyze')
 async def analyze_endpoint(file:UploadFile=File(...), pool_json:str=Form(...), aliases_json:str=Form('{}'), threshold:int=Form(82)):
     try:
         data=await file.read()
